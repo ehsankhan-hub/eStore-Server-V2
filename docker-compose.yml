@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # MySQL Database Service
+  mysql:
+    image: mysql:8.0
+    container_name: estore_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: estore_root_password
+      MYSQL_DATABASE: estore1
+      MYSQL_USER: estore_user
+      MYSQL_PASSWORD: estore_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/estore_database_setup.sql:/docker-entrypoint-initdb.d/01-database-setup.sql
+      - ./db/estore_sample_data.sql:/docker-entrypoint-initdb.d/02-sample-data.sql
+      - ./db/estore_maintenance.sql:/docker-entrypoint-initdb.d/03-maintenance.sql
+    networks:
+      - estore_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # phpMyAdmin (Optional - for database management)
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: estore_phpmyadmin
+    restart: always
+    ports:
+      - "8080:80"
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: root
+      PMA_PASSWORD: estore_root_password
+      MYSQL_ROOT_PASSWORD: estore_root_password
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - estore_network
+
+  # Node.js Application Service (Optional - if you want to run your app in Docker)
+  estore_app:
+    build:
+      context: .  # Current directory where Dockerfile is located
+      dockerfile: Dockerfile
+    container_name: estore_app
+    restart: always
+    ports:
+      - "5004:5004"
+    environment:
+      DB_HOST: mysql
+      DB_USER: estore_user
+      DB_PASSWORD: estore_password
+      DB_NAME: estore1
+      DB_PORT: 3306
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - estore_network
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  estore_network:
+    driver: bridge

@@ -1,0 +1,40 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+[[services]]
+name = "estore-api"
+
+[services.variables]
+NODE_ENV = "production"
+PORT = "5001"
+
+[services.environment_variables]
+DB_HOST = "mysql.railway.app"
+DB_USER = "root"
+DB_PASSWORD = "your_password"
+DB_NAME = "railway"
+DB_PORT = "3306"
+
+[[services.ports]]
+port = 5001
+type = "http"
+
+[[services.tcp_checks]]
+grace_period = "10s"
+interval = "15s"
+restart_limit = 0
+timeout = "2s"
+
+[[services.http_checks]]
+grace_period = "5s"
+interval = "10s"
+method = "get"
+path = "/"
+protocol = "http"
+restart_limit = 0
+timeout = "1000ms"
