@@ -40,11 +40,10 @@ orders.post("/add", checkToken, async (req, res) => {
       const orderId = orderResult.insertId;
       console.log('Order created with ID:', orderId, 'Total items to insert:', orderDetails.length);
 
-      // 2. Insert order details one by one to ensure integrity
       for (const item of orderDetails) {
         console.log('Inserting item:', item.productId, 'Qty:', item.qty);
         await connection.query(
-          `insert into order_details (order_id, product_id, quantity, unit_price, subtotal) values (?, ?, ?, ?, ?)`,
+          `insert into orderdetails (orderId, product_id, quantity, unit_price, subtotal) values (?, ?, ?, ?, ?)`,
           [orderId, item.productId, item.qty, item.price, item.amount]
         );
       }
@@ -128,9 +127,9 @@ orders.get("/orderproducts", checkToken, async (req, res) => {
             od.quantity as qty, 
             od.unit_price as price, 
             od.subtotal as amount 
-         from order_details od 
+         from orderdetails od 
          join products p on od.product_id = p.id 
-         where od.order_id = ?`,
+         where od.orderId = ?`,
         [orderId]
       );
     

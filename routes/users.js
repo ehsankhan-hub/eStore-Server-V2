@@ -63,6 +63,7 @@ user.post("/login", async (req, res) => {
       token: token,
       expiresInSeconds: 3600,
       user: {
+        id: foundUser.id,
         firstName: foundUser.firstName,
         lastName: foundUser.lastName,
         address: foundUser.address,

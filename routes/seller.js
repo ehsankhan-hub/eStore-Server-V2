@@ -299,4 +299,47 @@ router.put("/product/:id", upload.array("images", 10), async (req, res) => {
   }
 });
 
+// @route   GET /api/seller/orders/:sellerId
+// @desc    Get all orders containing products from this seller
+router.get("/orders/:sellerId", async (req, res) => {
+  try {
+    const sellerId = req.params.sellerId;
+    const [rows] = await pool.query(
+      `SELECT 
+        od.orderId,
+        o.orderDate,
+        p.product_name,
+        od.qty as quantity,
+        od.price as unit_price,
+        od.amount as subtotal,
+        o.orderStatus,
+        o.userName as customerName
+       FROM orderdetails od
+       JOIN products p ON od.productId = p.id
+       JOIN orders o ON od.orderId = o.orderId
+       WHERE p.seller_id = ?
+       ORDER BY o.orderDate DESC`,
+      [sellerId]
+    );
+
+    // Calculate summary statistics
+    let totalSales = 0;
+    rows.forEach(item => totalSales += parseFloat(item.subtotal));
+    const platformFee = totalSales * 0.10; // 10% example
+    const readyForPayout = totalSales - platformFee;
+
+    res.json({
+      orders: rows,
+      summary: {
+        totalSales,
+        platformFee,
+        readyForPayout
+      }
+    });
+  } catch (error) {
+    console.error("Error fetching seller orders:", error);
+    res.status(500).json({ error: "Failed to fetch orders", details: error.message });
+  }
+});
+
 module.exports = router;
