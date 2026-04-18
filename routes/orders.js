@@ -2,6 +2,7 @@ const express = require("express");
 const pool = require("../shared/pool");
 const orders = express.Router();
 const checkToken = require("../shared/checkToken").checkToken;
+const { quoteCartFromDatabase } = require("../shared/cartPricing");
 
 orders.post("/add", checkToken, async (req, res) => {
   const {
@@ -11,13 +12,23 @@ orders.post("/add", checkToken, async (req, res) => {
     city,
     state,
     pin,
-    total,
-    shippingCost,
     orderDetails,
   } = req.body;
 
   try {
-    // ... (userId fetch logic)
+    if (!userEmail || String(userEmail).toLowerCase() !== String(req.user.email).toLowerCase()) {
+      return res.status(403).json({ message: "Email does not match signed-in user." });
+    }
+
+    if (!Array.isArray(orderDetails) || orderDetails.length === 0) {
+      return res.status(400).json({ message: "Order must include at least one item." });
+    }
+
+    const lines = orderDetails.map((item) => ({
+      productId: item.productId,
+      qty: item.qty,
+    }));
+
     const [users] = await pool
       .promise()
       .query("select id from users where email = ?", [userEmail]);
@@ -32,33 +43,59 @@ orders.post("/add", checkToken, async (req, res) => {
     try {
       await connection.beginTransaction();
 
-      //Insert order (Adding shipping_cost)
+      const quote = await quoteCartFromDatabase(connection, lines, {
+        forUpdate: true,
+      });
+      if (quote.error) {
+        await connection.rollback();
+        const status = quote.error === "OUT_OF_STOCK" ? 409 : 400;
+        return res.status(status).json({
+          error: quote.error,
+          message: quote.message,
+          productId: quote.productId,
+          stock: quote.stock,
+        });
+      }
+
+      const { items, subtotal, shipping, grandTotal } = quote;
+
       const [orderResult] = await connection.query(
         `insert into orders (userId, userName, address, city, state, pin, total, shipping_cost) values (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, userName, address, city, state, pin, total, shippingCost || 0]
+        [userId, userName, address, city, state, pin, grandTotal, shipping]
       );
 
       const orderId = orderResult.insertId;
 
-      //Insert order details
-      for (const item of orderDetails) {
+      const sortedItems = [...items].sort((a, b) => a.productId - b.productId);
+
+      for (const item of sortedItems) {
+        const [upd] = await connection.query(
+          `update products set stock_quantity = stock_quantity - ? where id = ? and stock_quantity >= ? and is_active = 1`,
+          [item.qty, item.productId, item.qty]
+        );
+        if (upd.affectedRows !== 1) {
+          await connection.rollback();
+          return res.status(409).json({
+            error: "OUT_OF_STOCK",
+            message: "Insufficient stock at checkout.",
+            productId: item.productId,
+          });
+        }
+
         await connection.query(
           `insert into orderdetails (orderId, productId, qty, price, amount) values (?, ?, ?, ?, ?)`,
-          [orderId, item.productId, item.qty, item.price, item.amount]
+          [orderId, item.productId, item.qty, item.unitPrice, item.lineTotal]
         );
-
-        // Deduct stock from products table
-        console.log(`Deducting ${item.qty} from product ${item.productId}`);
-        const [updateResult] = await connection.query(
-          `update products set stock_quantity = stock_quantity - ? where id = ?`,
-          [item.qty, item.productId]
-        );
-        console.log(`Update result for product ${item.productId}:`, updateResult.affectedRows, "rows affected");
       }
 
       await connection.commit();
-      console.log(`Transaction committed for order ${orderId}`);
-      res.status(201).json({ message: "Order placed successfully." });
+      res.status(201).json({
+        message: "Order placed successfully.",
+        orderId,
+        subtotal,
+        shipping,
+        total: grandTotal,
+      });
     } catch (error) {
       await connection.rollback();
       throw error;
@@ -139,7 +176,7 @@ orders.get("/orderproducts", checkToken, async (req, res) => {
          where od.orderId = ?`,
         [orderId]
       );
-    
+
     const orderDetailsList = orderProducts.map((item) => ({
       productId: item.productId,
       productName: item.productName,
@@ -159,40 +196,45 @@ orders.get("/orderproducts", checkToken, async (req, res) => {
   }
 });
 
-// TEMPORARY: Endpoint to clear orders for testing
-orders.get("/clear-all", async (req, res) => {
-  const { userEmail } = req.query;
-  console.log('Clearing orders for email:', userEmail);
-  try {
-    const [users] = await pool
-      .promise()
-      .query(`Select id from users where email = ?`, [userEmail]);
-
-    if (users.length === 0) {
-      console.log('User not found:', userEmail);
-      return res.status(404).json({ message: "User not found" });
+if (process.env.ALLOW_ORDER_TEST_CLEAR === "true") {
+  orders.get("/clear-all", checkToken, async (req, res) => {
+    const { userEmail } = req.query;
+    if (
+      String(req.user.email).toLowerCase() !== String(userEmail || "").toLowerCase()
+    ) {
+      return res.status(403).json({ message: "Can only clear orders for your own account." });
     }
-
-    const userId = users[0].id;
-    const connection = await pool.promise().getConnection();
     try {
-      await connection.beginTransaction();
-      // Delete orderdetails first due to foreign key
-      await connection.query(`delete from orderdetails where orderId in (select orderId from orders where userId = ?)`, [userId]);
-      await connection.query(`delete from orders where userId = ?`, [userId]);
-      await connection.commit();
-      console.log('Successfully cleared orders for userId:', userId);
-      res.status(200).json({ message: "Test orders cleared successfully." });
+      const [users] = await pool
+        .promise()
+        .query(`Select id from users where email = ?`, [userEmail]);
+
+      if (users.length === 0) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const userId = users[0].id;
+      const connection = await pool.promise().getConnection();
+      try {
+        await connection.beginTransaction();
+        await connection.query(
+          `delete from orderdetails where orderId in (select orderId from orders where userId = ?)`,
+          [userId]
+        );
+        await connection.query(`delete from orders where userId = ?`, [userId]);
+        await connection.commit();
+        res.status(200).json({ message: "Test orders cleared successfully." });
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
     } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
+      console.error("Clear orders error:", error);
+      res.status(500).json({ message: "Failed to clear orders" });
     }
-  } catch (error) {
-    console.error('Clear orders error:', error);
-    res.status(500).json({ message: "Failed to clear orders" });
-  }
-});
+  });
+}
 
 module.exports = orders;

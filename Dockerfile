@@ -7,10 +7,10 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
+COPY package.json package-lock.json ./
 
-# Install dependencies with clean cache
-RUN npm install --quiet && npm cache clean --force
+# Install into image (used to seed the node_modules volume on first run)
+RUN npm install --omit=dev --quiet && npm cache clean --force
 
 # Copy application code
 COPY . .

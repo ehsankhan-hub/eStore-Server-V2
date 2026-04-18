@@ -1,8 +1,8 @@
 const express = require("express");
 const path = require("path");
-require('dotenv').config({ path: '.env' });
+require("dotenv").config({ path: ".env" });
 const cors = require("cors");
-const mysql = require("mysql2");
+const helmet = require("helmet");
 
 const app = express();
 const PORT = process.env.PORT || 5004;
@@ -18,7 +18,18 @@ app.use((req, res, next) => {
 app.use("/api", checkMaintenanceMode);
 
 // Middleware
-app.use(cors());
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+const corsOrigin = process.env.CORS_ORIGIN;
+app.use(
+  cors(
+    corsOrigin
+      ? {
+          origin: corsOrigin.split(",").map((s) => s.trim()),
+          credentials: true,
+        }
+      : undefined
+  )
+);
 app.use(express.json());
 app.use("/api/uploads", express.static(path.join(__dirname, "uploads")));
 
@@ -30,9 +41,6 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason, promise) => {
     console.error('CRITICAL: Unhandled Rejection at:', promise, 'reason:', reason);
 });
-
-// Use the shared database connection
-const pool = require("./shared/pool");
 
 // Health check
 app.get("/", (req, res) => {

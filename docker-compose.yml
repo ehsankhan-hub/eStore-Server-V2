@@ -67,10 +67,13 @@ services:
       - estore_network
     volumes:
       - .:/app
-      - /app/node_modules
+      # Named volume so host bind-mount does not wipe node_modules; refresh after new deps: see DOCKER_README
+      - estore_app_node_modules:/app/node_modules
 
 volumes:
   mysql_data:
+    driver: local
+  estore_app_node_modules:
     driver: local
 
 networks:

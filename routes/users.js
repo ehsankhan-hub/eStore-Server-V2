@@ -1,11 +1,21 @@
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const pool = require("../shared/pool");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
+const JWT_SECRET = process.env.JWT_SECRET || "estore-secret-key";
+
 const user = express.Router();
 
-user.post("/signup", async (req, res) => {
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.AUTH_RATE_LIMIT_MAX) || 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+user.post("/signup", authLimiter, async (req, res) => {
   const { firstName, lastName, address, city, state, pin, email, password } =
     req.body;
 
@@ -36,7 +46,7 @@ user.post("/signup", async (req, res) => {
   }
 });
 
-user.post("/login", async (req, res) => {
+user.post("/login", authLimiter, async (req, res) => {
   const { email, password } = req.body;
 
   try {
@@ -56,7 +66,7 @@ user.post("/login", async (req, res) => {
 
     const token = jwt.sign(
       { id: foundUser.id, email: foundUser.email, role: foundUser.role },
-      "estore-secret-key",
+      JWT_SECRET,
       { expiresIn: "1h" }
     );
     res.status(200).send({

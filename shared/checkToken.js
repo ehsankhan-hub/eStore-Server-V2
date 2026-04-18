@@ -1,14 +1,18 @@
 const jwt = require("jsonwebtoken");
 
+const JWT_SECRET = process.env.JWT_SECRET || "estore-secret-key";
+
 const checkToken = async (req, res, next) => {
   try {
-    const token = req.headers?.authorization;
-
+    let token = req.headers?.authorization;
     if (!token) {
       return res.status(403).json({ message: "No token provided." });
     }
+    if (typeof token === "string" && token.startsWith("Bearer ")) {
+      token = token.slice(7).trim();
+    }
 
-    const decoded = await jwt.verify(token, "estore-secret-key");
+    const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
 
     next();
@@ -19,7 +23,7 @@ const checkToken = async (req, res, next) => {
 };
 
 const isAdmin = (req, res, next) => {
-  if (req.user && req.user.role === 'admin') {
+  if (req.user && req.user.role === "admin") {
     next();
   } else {
     res.status(403).json({ message: "Access denied. Admin rights required." });
@@ -27,4 +31,3 @@ const isAdmin = (req, res, next) => {
 };
 
 module.exports = { checkToken, isAdmin };
-

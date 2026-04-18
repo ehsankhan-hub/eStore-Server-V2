@@ -79,11 +79,6 @@ WHERE (
  // Using template literal to insert the product ID.
  // For actual DB calls, use parameterized queries to prevent SQL injection.
  
- // You can then use this string with your database client library.
- console.log("--- Concatenated SQL Query String ---");
-
- 
-debugger
  let queryParams = [];
 
   if (mainCategoryId) {
@@ -128,7 +123,9 @@ WHERE
     queryParams.push(mainCategoryId);
 console.log('mainCategoryId '+mainCategoryId);
     if (keyword) {
-      query += ` AND keywords LIKE '%${keyword}%'`;
+      const esc = (s) => s.replace(/!/g, "!!").replace(/%/g, "!%").replace(/_/g, "!_");
+      query += " AND keywords LIKE ? ESCAPE '!'";
+      queryParams.push("%" + esc(String(keyword)) + "%");
     }
   } else if (subCategoryId) {
     query += " where category_id = ?";
