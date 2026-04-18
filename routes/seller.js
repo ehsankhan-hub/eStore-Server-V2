@@ -304,11 +304,12 @@ router.put("/product/:id", upload.array("images", 10), async (req, res) => {
 router.get("/orders/:sellerId", async (req, res) => {
   try {
     const sellerId = req.params.sellerId;
-    const [rows] = await pool.query(
-      `SELECT 
+    
+    let query = `SELECT 
         od.orderId,
         o.orderDate,
         p.product_name,
+        COALESCE(cat.name, 'General') as categoryName,
         od.qty as quantity,
         od.price as unit_price,
         od.amount as subtotal,
@@ -316,15 +317,22 @@ router.get("/orders/:sellerId", async (req, res) => {
         o.userName as customerName
        FROM orderdetails od
        JOIN products p ON od.productId = p.id
-       JOIN orders o ON od.orderId = o.orderId
-       WHERE p.seller_id = ?
-       ORDER BY o.orderDate DESC`,
-      [sellerId]
-    );
+       LEFT JOIN categories cat ON p.category_id = cat.id
+       JOIN orders o ON od.orderId = o.orderId`;
+    
+    let params = [];
+    if (sellerId !== 'all') {
+      query += ` WHERE p.seller_id = ?`;
+      params.push(sellerId);
+    }
+    
+    query += ` ORDER BY o.orderDate DESC`;
+
+    const [rows] = await pool.query(query, params);
 
     // Calculate summary statistics
     let totalSales = 0;
-    rows.forEach(item => totalSales += parseFloat(item.subtotal));
+    rows.forEach(item => totalSales += parseFloat(item.subtotal || 0));
     const platformFee = totalSales * 0.10; // 10% example
     const readyForPayout = totalSales - platformFee;
 
