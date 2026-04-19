@@ -16,7 +16,7 @@ const authLimiter = rateLimit({
 });
 
 user.post("/signup", authLimiter, async (req, res) => {
-  const { firstName, lastName, address, city, state, pin, email, password } =
+  const { firstName, lastName, address, city, state, pin, email, password, role } =
     req.body;
 
   try {
@@ -29,11 +29,15 @@ user.post("/signup", authLimiter, async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    const normalizedRole = String(role || 'buyer').toLowerCase();
+    const allowedRoles = new Set(['buyer', 'seller']);
+    const accountRole = allowedRoles.has(normalizedRole) ? normalizedRole : 'buyer';
+
     await pool
       .promise()
       .query(
-        `insert into users (email, firstName, lastName, address, city, state, pin, password) values (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [email, firstName, lastName, address, city, state, pin, hashedPassword]
+        `insert into users (email, firstName, lastName, address, city, state, pin, password, role) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [email, firstName, lastName, address, city, state, pin, hashedPassword, accountRole]
       );
 
     res.status(201).send({ message: "Success" });

@@ -30,7 +30,7 @@ router.get('/stats', async (req, res) => {
         console.log('Fetching Admin Stats for User:', req.user.email);
         
         // Segregated user counts
-        const [buyerRes] = await pool.promise().query("SELECT COUNT(*) as count FROM users WHERE role = 'user'");
+        const [buyerRes] = await pool.promise().query("SELECT COUNT(*) as count FROM users WHERE LOWER(role) IN ('buyer', 'user')");
         const [sellerRes] = await pool.promise().query("SELECT COUNT(*) as count FROM users WHERE role = 'seller'");
         const [adminRes] = await pool.promise().query("SELECT COUNT(*) as count FROM users WHERE role = 'admin'");
         
