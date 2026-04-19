@@ -3,6 +3,7 @@ const rateLimit = require("express-rate-limit");
 const pool = require("../shared/pool");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const { encryptPayoutPayload } = require("../shared/payoutCrypto");
 
 const JWT_SECRET = process.env.JWT_SECRET || "estore-secret-key";
 
@@ -16,8 +17,21 @@ const authLimiter = rateLimit({
 });
 
 user.post("/signup", authLimiter, async (req, res) => {
-  const { firstName, lastName, address, city, state, pin, email, password, role } =
-    req.body;
+  const {
+    firstName,
+    lastName,
+    address,
+    city,
+    state,
+    pin,
+    email,
+    password,
+    role,
+    storeName,
+    bankName,
+    accountNumber,
+    routingNumber,
+  } = req.body;
 
   try {
     const [existingUser] = await pool
@@ -29,16 +43,65 @@ user.post("/signup", authLimiter, async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const normalizedRole = String(role || 'buyer').toLowerCase();
-    const allowedRoles = new Set(['buyer', 'seller']);
-    const accountRole = allowedRoles.has(normalizedRole) ? normalizedRole : 'buyer';
+    const normalizedRole = String(role || "buyer").toLowerCase();
+    const allowedRoles = new Set(["buyer", "seller"]);
+    const accountRole = allowedRoles.has(normalizedRole) ? normalizedRole : "buyer";
 
-    await pool
-      .promise()
-      .query(
-        `insert into users (email, firstName, lastName, address, city, state, pin, password, role) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [email, firstName, lastName, address, city, state, pin, hashedPassword, accountRole]
-      );
+    let seller_store_name = null;
+    let payout_bank_name = null;
+    let payout_account_last4 = null;
+    let payout_routing_last4 = null;
+    let payout_sensitive_enc = null;
+    let payout_verification_status = null;
+
+    if (accountRole === "seller") {
+      const store = String(storeName || "").trim();
+      const bank = String(bankName || "").trim();
+      const acctDigits = String(accountNumber || "").replace(/\D/g, "");
+      const routeRaw = String(routingNumber || "").trim();
+
+      if (!store || !bank || acctDigits.length < 4 || routeRaw.length < 4) {
+        return res.status(400).send({
+          message:
+            "Seller registration requires store name, bank name, account number, and routing / SWIFT (min 4 characters each).",
+        });
+      }
+
+      seller_store_name = store;
+      payout_bank_name = bank;
+      payout_account_last4 = acctDigits.slice(-4);
+      payout_routing_last4 = routeRaw.slice(-4);
+      payout_sensitive_enc = encryptPayoutPayload({
+        accountNumber: acctDigits,
+        routingNumber: routeRaw,
+      });
+      payout_verification_status = "pending";
+    }
+
+    await pool.promise().query(
+      `insert into users (
+        email, firstName, lastName, address, city, state, pin, password, role,
+        seller_store_name, payout_bank_name, payout_account_last4, payout_routing_last4,
+        payout_sensitive_enc, payout_verification_status
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        email,
+        firstName,
+        lastName,
+        address,
+        city,
+        state,
+        pin,
+        hashedPassword,
+        accountRole,
+        seller_store_name,
+        payout_bank_name,
+        payout_account_last4,
+        payout_routing_last4,
+        payout_sensitive_enc,
+        payout_verification_status,
+      ]
+    );
 
     res.status(201).send({ message: "Success" });
   } catch (error) {
@@ -86,6 +149,9 @@ user.post("/login", authLimiter, async (req, res) => {
         pin: foundUser.pin,
         email: foundUser.email,
         role: foundUser.role,
+        sellerStoreName: foundUser.seller_store_name || null,
+        payoutVerificationStatus: foundUser.payout_verification_status || null,
+        isStripeConnected: !!foundUser.is_stripe_connected,
       },
       message: "Login successful",
     });
