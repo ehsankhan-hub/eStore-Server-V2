@@ -166,9 +166,10 @@ user.post("/login", authLimiter, async (req, res) => {
 });
 
 user.post("/social-login", authLimiter, async (req, res) => {
-  const { email, firstName, lastName, provider, providerUid } = req.body || {};
+  const { email, firstName, lastName, provider, providerUid, expectedRole } = req.body || {};
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const normalizedProvider = String(provider || "").trim().toLowerCase();
+  const normalizedExpectedRole = String(expectedRole || "").trim().toLowerCase();
 
   if (!normalizedEmail || !normalizedProvider || !providerUid) {
     return res
@@ -182,17 +183,26 @@ user.post("/social-login", authLimiter, async (req, res) => {
       .query("select * from users where email = ?", [normalizedEmail]);
 
     let foundUser = users[0];
-
+    let onboardingRequired = false;
     if (!foundUser) {
-      const safeFirstName = String(firstName || "").trim() || "User";
-      const safeLastName = String(lastName || "").trim() || "Social";
+      const roleToCreate =
+        normalizedExpectedRole === "seller" ? "seller" : "buyer";
       const syntheticPassword = crypto.randomBytes(32).toString("hex");
       const hashedPassword = await bcrypt.hash(syntheticPassword, 10);
+      const safeFirstName = String(firstName || "").trim() || "User";
+      const safeLastName = String(lastName || "").trim() || "Social";
+
+      let payoutVerificationStatus = null;
+      if (roleToCreate === "seller") {
+        // New social sellers must complete onboarding before becoming active.
+        payoutVerificationStatus = "pending";
+        onboardingRequired = true;
+      }
 
       const [insertResult] = await pool.promise().query(
         `insert into users (
-          email, firstName, lastName, address, city, state, pin, password, role
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          email, firstName, lastName, address, city, state, pin, password, role, payout_verification_status
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           normalizedEmail,
           safeFirstName,
@@ -202,7 +212,8 @@ user.post("/social-login", authLimiter, async (req, res) => {
           "",
           "",
           hashedPassword,
-          "buyer",
+          roleToCreate,
+          payoutVerificationStatus,
         ]
       );
 
@@ -210,6 +221,16 @@ user.post("/social-login", authLimiter, async (req, res) => {
         .promise()
         .query("select * from users where id = ?", [insertResult.insertId]);
       foundUser = createdRows[0];
+    }
+
+    if (
+      normalizedExpectedRole &&
+      foundUser.role &&
+      String(foundUser.role).toLowerCase() !== normalizedExpectedRole
+    ) {
+      return res.status(403).send({
+        message: `This account is registered as '${foundUser.role}'.`,
+      });
     }
 
     const token = jwt.sign(
@@ -221,6 +242,7 @@ user.post("/social-login", authLimiter, async (req, res) => {
     res.status(200).send({
       token,
       expiresInSeconds: 3600,
+      onboardingRequired,
       user: {
         id: foundUser.id,
         firstName: foundUser.firstName,
