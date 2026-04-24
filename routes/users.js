@@ -3,6 +3,7 @@ const rateLimit = require("express-rate-limit");
 const pool = require("../shared/pool");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const { encryptPayoutPayload } = require("../shared/payoutCrypto");
 
 const JWT_SECRET = process.env.JWT_SECRET || "estore-secret-key";
@@ -157,6 +158,87 @@ user.post("/login", authLimiter, async (req, res) => {
     });
   } catch (err) {
     console.log("Login Error: ", err);
+    res.status(500).send({
+      err: err.code || "INTERNAL_ERROR",
+      message: err.message || "Something went wrong",
+    });
+  }
+});
+
+user.post("/social-login", authLimiter, async (req, res) => {
+  const { email, firstName, lastName, provider, providerUid } = req.body || {};
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const normalizedProvider = String(provider || "").trim().toLowerCase();
+
+  if (!normalizedEmail || !normalizedProvider || !providerUid) {
+    return res
+      .status(400)
+      .send({ message: "email, provider and providerUid are required." });
+  }
+
+  try {
+    const [users] = await pool
+      .promise()
+      .query("select * from users where email = ?", [normalizedEmail]);
+
+    let foundUser = users[0];
+
+    if (!foundUser) {
+      const safeFirstName = String(firstName || "").trim() || "User";
+      const safeLastName = String(lastName || "").trim() || "Social";
+      const syntheticPassword = crypto.randomBytes(32).toString("hex");
+      const hashedPassword = await bcrypt.hash(syntheticPassword, 10);
+
+      const [insertResult] = await pool.promise().query(
+        `insert into users (
+          email, firstName, lastName, address, city, state, pin, password, role
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          normalizedEmail,
+          safeFirstName,
+          safeLastName,
+          "",
+          "",
+          "",
+          "",
+          hashedPassword,
+          "buyer",
+        ]
+      );
+
+      const [createdRows] = await pool
+        .promise()
+        .query("select * from users where id = ?", [insertResult.insertId]);
+      foundUser = createdRows[0];
+    }
+
+    const token = jwt.sign(
+      { id: foundUser.id, email: foundUser.email, role: foundUser.role },
+      JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    res.status(200).send({
+      token,
+      expiresInSeconds: 3600,
+      user: {
+        id: foundUser.id,
+        firstName: foundUser.firstName,
+        lastName: foundUser.lastName,
+        address: foundUser.address,
+        city: foundUser.city,
+        state: foundUser.state,
+        pin: foundUser.pin,
+        email: foundUser.email,
+        role: foundUser.role,
+        sellerStoreName: foundUser.seller_store_name || null,
+        payoutVerificationStatus: foundUser.payout_verification_status || null,
+        isStripeConnected: !!foundUser.is_stripe_connected,
+      },
+      message: `Login successful via ${normalizedProvider}`,
+    });
+  } catch (err) {
+    console.log("Social Login Error: ", err);
     res.status(500).send({
       err: err.code || "INTERNAL_ERROR",
       message: err.message || "Something went wrong",
