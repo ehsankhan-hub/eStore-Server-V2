@@ -268,6 +268,172 @@ user.post("/social-login", authLimiter, async (req, res) => {
   }
 });
 
+user.get("/seller-onboarding", async (req, res) => {
+  const email = String(req.query.email || "").trim().toLowerCase();
+  if (!email) {
+    return res.status(400).send({ message: "Email is required" });
+  }
+
+  try {
+    const [users] = await pool
+      .promise()
+      .query("select * from users where email = ? and role = 'seller' limit 1", [email]);
+
+    if (!users.length) {
+      return res.status(404).send({ message: "Seller not found" });
+    }
+
+    const foundUser = users[0];
+    return res.status(200).send({
+      message: "Success",
+      data: {
+        firstName: foundUser.firstName || "",
+        lastName: foundUser.lastName || "",
+        email: foundUser.email || "",
+        address: foundUser.address || "",
+        city: foundUser.city || "",
+        state: foundUser.state || "",
+        pin: foundUser.pin || "",
+        storeName: foundUser.seller_store_name || "",
+        bankName: foundUser.payout_bank_name || "",
+        accountLast4: foundUser.payout_account_last4 || "",
+        routingLast4: foundUser.payout_routing_last4 || "",
+        payoutVerificationStatus: foundUser.payout_verification_status || null,
+      },
+    });
+  } catch (err) {
+    console.log("Seller Onboarding Fetch Error:", err);
+    return res.status(500).send({
+      err: err.code || "INTERNAL_ERROR",
+      message: err.message || "Something went wrong",
+    });
+  }
+});
+
+user.put("/seller-onboarding", async (req, res) => {
+  const {
+    email,
+    firstName,
+    lastName,
+    address,
+    city,
+    state,
+    pin,
+    storeName,
+    bankName,
+    accountNumber,
+    routingNumber,
+  } = req.body || {};
+
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const safeStoreName = String(storeName || "").trim();
+  const safeBankName = String(bankName || "").trim();
+  const safeAccountNumber = String(accountNumber || "").replace(/\D/g, "");
+  const safeRoutingNumber = String(routingNumber || "").trim();
+
+  if (!normalizedEmail) {
+    return res.status(400).send({ message: "Email is required" });
+  }
+  if (!safeStoreName || !safeBankName) {
+    return res.status(400).send({ message: "Store and bank name are required." });
+  }
+
+  try {
+    const [users] = await pool
+      .promise()
+      .query("select * from users where email = ? and role = 'seller' limit 1", [normalizedEmail]);
+
+    if (!users.length) {
+      return res.status(404).send({ message: "Seller not found" });
+    }
+
+    const foundUser = users[0];
+    let payoutAccountLast4 = foundUser.payout_account_last4 || null;
+    let payoutRoutingLast4 = foundUser.payout_routing_last4 || null;
+    let payoutSensitiveEnc = foundUser.payout_sensitive_enc || null;
+
+    const hasAccountInput = safeAccountNumber.length > 0;
+    const hasRoutingInput = safeRoutingNumber.length > 0;
+
+    if (hasAccountInput !== hasRoutingInput) {
+      return res.status(400).send({
+        message:
+          "Provide both account number and routing / SWIFT together when updating payout details.",
+      });
+    }
+
+    if (hasAccountInput && hasRoutingInput) {
+      if (safeAccountNumber.length < 4 || safeRoutingNumber.length < 4) {
+        return res.status(400).send({
+          message:
+            "When updating payout details, account number and routing / SWIFT must be at least 4 characters.",
+        });
+      }
+
+      payoutAccountLast4 = safeAccountNumber.slice(-4);
+      payoutRoutingLast4 = safeRoutingNumber.slice(-4);
+      payoutSensitiveEnc = encryptPayoutPayload({
+        accountNumber: safeAccountNumber,
+        routingNumber: safeRoutingNumber,
+      });
+    }
+
+    const hasStoredPayoutDetails =
+      !!payoutAccountLast4 && !!payoutRoutingLast4 && !!payoutSensitiveEnc;
+    if (!hasStoredPayoutDetails) {
+      return res.status(400).send({
+        message:
+          "Payout account details are missing. Please provide account number and routing / SWIFT.",
+      });
+    }
+
+    const normalizedPayoutStatus =
+      String(foundUser.payout_verification_status || "").toLowerCase() === "verified"
+        ? "verified"
+        : "pending";
+
+    await pool.promise().query(
+      `update users set
+        firstName = ?,
+        lastName = ?,
+        address = ?,
+        city = ?,
+        state = ?,
+        pin = ?,
+        seller_store_name = ?,
+        payout_bank_name = ?,
+        payout_account_last4 = ?,
+        payout_routing_last4 = ?,
+        payout_sensitive_enc = ?,
+        payout_verification_status = ?
+       where id = ?`,
+      [
+        String(firstName || "").trim(),
+        String(lastName || "").trim(),
+        String(address || "").trim(),
+        String(city || "").trim(),
+        String(state || "").trim(),
+        String(pin || "").trim(),
+        safeStoreName,
+        safeBankName,
+        payoutAccountLast4,
+        payoutRoutingLast4,
+        payoutSensitiveEnc,
+        normalizedPayoutStatus,
+        foundUser.id,
+      ]
+    );
+
+    return res.status(200).send({ message: "Success" });
+  } catch (err) {
+    console.log("Seller Onboarding Update Error:", err);
+    return res.status(500).send({
+      err: err.code || "INTERNAL_ERROR",
+      message: err.message || "Something went wrong",
+    });
+  }
+});
+
 user.get("/profile", async (req, res) => {
   const email = req.query.email;
 
