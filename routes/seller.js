@@ -21,6 +21,7 @@ const upload = multer({
     limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
+
 function normalizeOfferExpiry(expiresAt) {
   const raw = String(expiresAt || "").trim();
   if (!raw) return null;
@@ -31,20 +32,36 @@ function normalizeOfferExpiry(expiresAt) {
   return raw;
 }
 
-async function ensureProductOptionColumns(connection) {
-  const queries = [
-    "ALTER TABLE products ADD COLUMN memory_options JSON NULL",
-    "ALTER TABLE products ADD COLUMN color_options JSON NULL",
-  ];
+function normalizeSpecifications(value) {
+  const normalized = normalizeJsonArray(value);
+  if (!normalized) return null;
 
-  for (const query of queries) {
-    try {
-      await connection.query(query);
-    } catch (error) {
-      if (error.code !== "ER_DUP_FIELDNAME") {
-        throw error;
-      }
-    }
+  try {
+    const parsed = JSON.parse(normalized);
+    if (!Array.isArray(parsed)) return null;
+
+    const specs = parsed
+      .map((entry) => {
+        if (typeof entry === "string") {
+          const raw = entry.trim();
+          if (!raw) return null;
+          const parts = raw.split(/[:\t]/).map((p) => p.trim()).filter(Boolean);
+          if (parts.length >= 2) {
+            return { key: parts[0], value: parts.slice(1).join(" : ") };
+          }
+          return null;
+        }
+
+        const key = String(entry?.key || entry?.name || entry?.label || "").trim();
+        const val = String(entry?.value || entry?.val || "").trim();
+        if (!key || !val) return null;
+        return { key, value: val };
+      })
+      .filter(Boolean);
+
+    return specs.length > 0 ? JSON.stringify(specs) : null;
+  } catch (error) {
+    return null;
   }
 }
 
@@ -127,19 +144,18 @@ router.post("/product", upload.array("images", 10), async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    await ensureProductOptionColumns(connection);
-
     const { product_name, category_id, description, price, seller_id } = req.body;
     const stock_quantity = req.body.stock_quantity || 10;
     const sku = "SKU-" + Date.now();
     const memoryOptions = normalizeJsonArray(req.body.memory_options);
     const colorOptions = normalizeColorOptions(req.body.color_options);
+    const specifications = normalizeSpecifications(req.body.specifications);
 
     // 1. Insert into products table
     const [productResult] = await connection.query(
-      `INSERT INTO products (product_name, category_id, description, price, seller_id, stock_quantity, sku, memory_options, color_options) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [product_name, category_id, description, price, seller_id || 1, stock_quantity, sku, memoryOptions, colorOptions]
+      `INSERT INTO products (product_name, category_id, description, price, seller_id, stock_quantity, sku, memory_options, color_options, specifications) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [product_name, category_id, description, price, seller_id || 1, stock_quantity, sku, memoryOptions, colorOptions, specifications]
     );
 
     const productId = productResult.insertId;
@@ -330,18 +346,18 @@ router.put("/product/:id", upload.array("images", 10), async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    await ensureProductOptionColumns(connection);
     const productId = req.params.id;
     const { product_name, category_id, description, price, stock_quantity } = req.body;
     const memoryOptions = normalizeJsonArray(req.body.memory_options);
     const colorOptions = normalizeColorOptions(req.body.color_options);
+    const specifications = normalizeSpecifications(req.body.specifications);
 
     // 1. Update basic product info
     await connection.query(
       `UPDATE products 
-       SET product_name = ?, category_id = ?, description = ?, price = ?, stock_quantity = ?, memory_options = ?, color_options = ?
+       SET product_name = ?, category_id = ?, description = ?, price = ?, stock_quantity = ?, memory_options = ?, color_options = ?, specifications = ?
        WHERE id = ?`,
-      [product_name || null, category_id || null, description || null, price || 0, stock_quantity || 0, memoryOptions, colorOptions, productId]
+      [product_name || null, category_id || null, description || null, price || 0, stock_quantity || 0, memoryOptions, colorOptions, specifications, productId]
     );
 
     // 2. Handle new images if provided (Append to existing)

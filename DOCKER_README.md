@@ -79,6 +79,26 @@ The database will be automatically initialized with:
 2. **Sample data** (users, products, categories, orders)
 3. **Maintenance scripts** (procedures, views)
 
+### One-time Product Options Migration
+
+Run this migration once in environments that already have an existing `products` table:
+
+```bash
+# Execute migration in Docker MySQL (idempotent/safe to re-run)
+Get-Content "db/add_product_options_and_specs.sql" | docker exec -i estore_mysql mysql -u estore_user -pestore_password estore1
+```
+
+This migration adds these JSON columns (if missing):
+- `memory_options`
+- `color_options`
+- `specifications`
+
+Verify columns:
+
+```bash
+docker exec -i estore_mysql mysql -u estore_user -pestore_password -N -e "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='estore1' AND TABLE_NAME='products' AND COLUMN_NAME IN ('memory_options','color_options','specifications') ORDER BY COLUMN_NAME;"
+```
+
 ## Docker Services Details
 
 ### MySQL Service
@@ -251,10 +271,11 @@ docker exec estore_mysql mysqldump -u root -pestore_root_password estore1 > "est
 ## Next Steps
 
 1. **Start the services**: `docker-compose up -d`
-2. **Access phpMyAdmin**: `http://localhost:8080`
-3. **Test your application**: Connect to `localhost:3306`
-4. **Develop your app**: Use the database for testing
-5. **Deploy**: Use the same setup for production
+2. **Run one-time migration**: `db/add_product_options_and_specs.sql`
+3. **Access phpMyAdmin**: `http://localhost:8080`
+4. **Test your application**: Connect to `localhost:3306`
+5. **Develop your app**: Use the database for testing
+6. **Deploy**: Use the same setup for production
 
 ## File Structure
 
