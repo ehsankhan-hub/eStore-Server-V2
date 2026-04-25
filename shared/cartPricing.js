@@ -71,7 +71,7 @@ async function quoteCartFromDatabase(conn, lines, opts = {}) {
         COALESCE((
           SELECT MAX(o.discount_pct) FROM offers o
           WHERE o.productId = p.id AND o.is_active = 1
-            AND (o.expires_at IS NULL OR o.expires_at > NOW())
+            AND (o.expires_at IS NULL OR DATE(o.expires_at) >= CURDATE())
         ), 0) AS discount_pct
        FROM products p WHERE p.id = ?${lockSql}`,
       [productId]

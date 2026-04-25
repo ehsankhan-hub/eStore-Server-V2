@@ -69,7 +69,7 @@ products.get("/", (req, res) => {
   ) AS galleryImages
 FROM
  products p
-LEFT JOIN offers o ON p.id = o.productId AND o.is_active = 1 AND (o.expires_at IS NULL OR o.expires_at > NOW())
+LEFT JOIN offers o ON p.id = o.productId AND o.is_active = 1 AND (o.expires_at IS NULL OR DATE(o.expires_at) >= CURDATE())
 WHERE (
     p.product_img IS NOT NULL 
     OR EXISTS (SELECT 1 FROM productimages WHERE product_id = p.id)
@@ -112,7 +112,7 @@ FROM
 JOIN
     categories c ON p.category_id = c.id
 LEFT JOIN
-    offers o ON p.id = o.productId AND o.is_active = 1 AND (o.expires_at IS NULL OR o.expires_at > NOW())
+    offers o ON p.id = o.productId AND o.is_active = 1 AND (o.expires_at IS NULL OR DATE(o.expires_at) >= CURDATE())
 WHERE
     (c.id = ? OR c.parent_category_id = ?)
     AND (p.product_img IS NOT NULL OR EXISTS (SELECT 1 FROM productimages WHERE product_id = p.id))
@@ -449,7 +449,7 @@ products.get("/hot-deals", (req, res) => {
     ) as galleryImages
     FROM products p
     JOIN offers o ON p.id = o.productId
-    WHERE o.is_active = 1 AND (o.expires_at IS NULL OR o.expires_at > NOW())
+    WHERE o.is_active = 1 AND (o.expires_at IS NULL OR DATE(o.expires_at) >= CURDATE())
     AND (p.product_img IS NOT NULL OR EXISTS (SELECT 1 FROM productimages WHERE product_id = p.id))
     AND p.is_active = 1
     ORDER BY o.discount_pct DESC
@@ -504,7 +504,7 @@ products.get("/:id", (req, res) => {
   ) AS galleryImages
 FROM
   products p 
-LEFT JOIN offers o ON p.id = o.productId AND o.is_active = 1 AND (o.expires_at IS NULL OR o.expires_at > NOW())
+LEFT JOIN offers o ON p.id = o.productId AND o.is_active = 1 AND (o.expires_at IS NULL OR DATE(o.expires_at) >= CURDATE())
 WHERE 
   p.id = ?`;
   

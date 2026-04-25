@@ -21,22 +21,125 @@ const upload = multer({
     limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
+function normalizeOfferExpiry(expiresAt) {
+  const raw = String(expiresAt || "").trim();
+  if (!raw) return null;
+  // Date-only values come from <input type="date">; keep offer valid until end of that day.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return `${raw} 23:59:59`;
+  }
+  return raw;
+}
+
+async function ensureProductOptionColumns(connection) {
+  const queries = [
+    "ALTER TABLE products ADD COLUMN memory_options JSON NULL",
+    "ALTER TABLE products ADD COLUMN color_options JSON NULL",
+  ];
+
+  for (const query of queries) {
+    try {
+      await connection.query(query);
+    } catch (error) {
+      if (error.code !== "ER_DUP_FIELDNAME") {
+        throw error;
+      }
+    }
+  }
+}
+
+function normalizeJsonArray(value) {
+  if (Array.isArray(value)) {
+    return JSON.stringify(value);
+  }
+
+  if (value && typeof value === "object") {
+    return JSON.stringify([value]);
+  }
+
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return JSON.stringify(parsed);
+    }
+    if (parsed && typeof parsed === "object") {
+      return JSON.stringify([parsed]);
+    }
+  } catch (error) {
+    const csvValues = raw
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (csvValues.length > 0) {
+      return JSON.stringify(csvValues);
+    }
+  }
+
+  return null;
+}
+
+function normalizeColorOptions(value) {
+  const normalized = normalizeJsonArray(value);
+  if (!normalized) return null;
+
+  try {
+    const parsed = JSON.parse(normalized);
+    if (!Array.isArray(parsed)) return null;
+
+    const colors = parsed
+      .map((color, index) => {
+        if (typeof color === "string") {
+          const raw = color.trim();
+          if (/^#([0-9A-F]{3}|[0-9A-F]{6})$/i.test(raw)) {
+            return { name: `Color ${index + 1}`, hex: raw };
+          }
+          const parts = raw.split(":").map((p) => p.trim());
+          if (parts.length === 2 && /^#([0-9A-F]{3}|[0-9A-F]{6})$/i.test(parts[1])) {
+            return { name: parts[0] || `Color ${index + 1}`, hex: parts[1] };
+          }
+          return null;
+        }
+
+        const hex = String(color?.hex || color?.code || color?.colorHex || "").trim();
+        if (!/^#([0-9A-F]{3}|[0-9A-F]{6})$/i.test(hex)) {
+          return null;
+        }
+        const rawName = String(color?.name || color?.label || color?.colorName || "").trim();
+        return {
+          name: rawName || `Color ${index + 1}`,
+          hex,
+        };
+      })
+      .filter(Boolean);
+
+    return colors.length > 0 ? JSON.stringify(colors) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
 // @route   POST /api/seller/product
 // @desc    Add a new product with images
 router.post("/product", upload.array("images", 10), async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    await ensureProductOptionColumns(connection);
 
     const { product_name, category_id, description, price, seller_id } = req.body;
     const stock_quantity = req.body.stock_quantity || 10;
     const sku = "SKU-" + Date.now();
+    const memoryOptions = normalizeJsonArray(req.body.memory_options);
+    const colorOptions = normalizeColorOptions(req.body.color_options);
 
     // 1. Insert into products table
     const [productResult] = await connection.query(
-      `INSERT INTO products (product_name, category_id, description, price, seller_id, stock_quantity, sku) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [product_name, category_id, description, price, seller_id || 1, stock_quantity, sku]
+      `INSERT INTO products (product_name, category_id, description, price, seller_id, stock_quantity, sku, memory_options, color_options) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [product_name, category_id, description, price, seller_id || 1, stock_quantity, sku, memoryOptions, colorOptions]
     );
 
     const productId = productResult.insertId;
@@ -57,10 +160,11 @@ router.post("/product", upload.array("images", 10), async (req, res) => {
     // 3. Optional: Insert into offers table if discount was provided
     const { discount_pct, expires_at } = req.body;
     if (discount_pct && parseInt(discount_pct) > 0) {
+      const normalizedExpiry = normalizeOfferExpiry(expires_at);
       await connection.query(
         `INSERT INTO offers (productId, offer_name, discount_pct, expires_at) 
          VALUES (?, ?, ?, ?)`,
-        [productId, "Introductory Offer", discount_pct, expires_at || null]
+        [productId, "Introductory Offer", discount_pct, normalizedExpiry]
       );
     }
 
@@ -130,10 +234,11 @@ router.post("/offer", async (req, res) => {
       [productId]
     );
 
+    const normalizedExpiry = normalizeOfferExpiry(expires_at);
     const [result] = await pool.query(
       `INSERT INTO offers (productId, offer_name, discount_pct, expires_at) 
        VALUES (?, ?, ?, ?)`,
-      [productId, offer_name, discount_pct, expires_at || null]
+      [productId, offer_name, discount_pct, normalizedExpiry]
     );
 
     res.status(201).json({ message: "Offer created successfully", offerId: result.insertId });
@@ -225,15 +330,18 @@ router.put("/product/:id", upload.array("images", 10), async (req, res) => {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    await ensureProductOptionColumns(connection);
     const productId = req.params.id;
     const { product_name, category_id, description, price, stock_quantity } = req.body;
+    const memoryOptions = normalizeJsonArray(req.body.memory_options);
+    const colorOptions = normalizeColorOptions(req.body.color_options);
 
     // 1. Update basic product info
     await connection.query(
       `UPDATE products 
-       SET product_name = ?, category_id = ?, description = ?, price = ?, stock_quantity = ?
+       SET product_name = ?, category_id = ?, description = ?, price = ?, stock_quantity = ?, memory_options = ?, color_options = ?
        WHERE id = ?`,
-      [product_name || null, category_id || null, description || null, price || 0, stock_quantity || 0, productId]
+      [product_name || null, category_id || null, description || null, price || 0, stock_quantity || 0, memoryOptions, colorOptions, productId]
     );
 
     // 2. Handle new images if provided (Append to existing)
@@ -257,6 +365,7 @@ router.put("/product/:id", upload.array("images", 10), async (req, res) => {
     // 3. Handle Offer update/creation
     const { discount_pct, expires_at } = req.body;
     if (discount_pct && parseInt(discount_pct) > 0) {
+      const normalizedExpiry = normalizeOfferExpiry(expires_at);
       // Check if active offer exists
       const [existingOffer] = await connection.query(
         "SELECT id FROM offers WHERE productId = ? AND is_active = 1 LIMIT 1",
@@ -266,13 +375,13 @@ router.put("/product/:id", upload.array("images", 10), async (req, res) => {
       if (existingOffer.length > 0) {
         await connection.query(
           "UPDATE offers SET discount_pct = ?, expires_at = ? WHERE id = ?",
-          [discount_pct, expires_at || null, existingOffer[0].id]
+          [discount_pct, normalizedExpiry, existingOffer[0].id]
         );
       } else {
         await connection.query(
           `INSERT INTO offers (productId, offer_name, discount_pct, expires_at) 
            VALUES (?, ?, ?, ?)`,
-          [productId, "Update Offer", discount_pct, expires_at || null]
+          [productId, "Update Offer", discount_pct, normalizedExpiry]
         );
       }
     }
