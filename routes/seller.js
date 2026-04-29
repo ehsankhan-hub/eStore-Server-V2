@@ -138,6 +138,31 @@ function normalizeColorOptions(value) {
   }
 }
 
+function normalizeVariantOptions(value) {
+  const normalized = normalizeJsonArray(value);
+  if (!normalized) return null;
+
+  try {
+    const parsed = JSON.parse(normalized);
+    if (!Array.isArray(parsed)) return null;
+
+    const options = parsed
+      .map((entry) => {
+        const name = String(entry?.name || "").trim();
+        const values = Array.isArray(entry?.values)
+          ? entry.values.map((v) => String(v || "").trim()).filter(Boolean)
+          : [];
+        if (!name || values.length === 0) return null;
+        return { name, values };
+      })
+      .filter(Boolean);
+
+    return options.length > 0 ? JSON.stringify(options) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
 // @route   POST /api/seller/product
 // @desc    Add a new product with images
 router.post("/product", upload.array("images", 10), async (req, res) => {
@@ -147,15 +172,16 @@ router.post("/product", upload.array("images", 10), async (req, res) => {
     const { product_name, category_id, description, price, seller_id } = req.body;
     const stock_quantity = req.body.stock_quantity || 10;
     const sku = "SKU-" + Date.now();
+    const variantOptions = normalizeVariantOptions(req.body.variant_options);
     const memoryOptions = normalizeJsonArray(req.body.memory_options);
     const colorOptions = normalizeColorOptions(req.body.color_options);
     const specifications = normalizeSpecifications(req.body.specifications);
 
     // 1. Insert into products table
     const [productResult] = await connection.query(
-      `INSERT INTO products (product_name, category_id, description, price, seller_id, stock_quantity, sku, memory_options, color_options, specifications) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [product_name, category_id, description, price, seller_id || 1, stock_quantity, sku, memoryOptions, colorOptions, specifications]
+      `INSERT INTO products (product_name, category_id, description, price, seller_id, stock_quantity, sku, variant_options, memory_options, color_options, specifications) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [product_name, category_id, description, price, seller_id || 1, stock_quantity, sku, variantOptions, memoryOptions, colorOptions, specifications]
     );
 
     const productId = productResult.insertId;
@@ -348,6 +374,7 @@ router.put("/product/:id", upload.array("images", 10), async (req, res) => {
     await connection.beginTransaction();
     const productId = req.params.id;
     const { product_name, category_id, description, price, stock_quantity } = req.body;
+    const variantOptions = normalizeVariantOptions(req.body.variant_options);
     const memoryOptions = normalizeJsonArray(req.body.memory_options);
     const colorOptions = normalizeColorOptions(req.body.color_options);
     const specifications = normalizeSpecifications(req.body.specifications);
@@ -355,9 +382,9 @@ router.put("/product/:id", upload.array("images", 10), async (req, res) => {
     // 1. Update basic product info
     await connection.query(
       `UPDATE products 
-       SET product_name = ?, category_id = ?, description = ?, price = ?, stock_quantity = ?, memory_options = ?, color_options = ?, specifications = ?
+       SET product_name = ?, category_id = ?, description = ?, price = ?, stock_quantity = ?, variant_options = ?, memory_options = ?, color_options = ?, specifications = ?
        WHERE id = ?`,
-      [product_name || null, category_id || null, description || null, price || 0, stock_quantity || 0, memoryOptions, colorOptions, specifications, productId]
+      [product_name || null, category_id || null, description || null, price || 0, stock_quantity || 0, variantOptions, memoryOptions, colorOptions, specifications, productId]
     );
 
     // 2. Handle new images if provided (Append to existing)

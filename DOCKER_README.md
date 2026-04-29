@@ -89,6 +89,7 @@ Get-Content "db/add_product_options_and_specs.sql" | docker exec -i estore_mysql
 ```
 
 This migration adds these JSON columns (if missing):
+- `variant_options`
 - `memory_options`
 - `color_options`
 - `specifications`
@@ -96,7 +97,7 @@ This migration adds these JSON columns (if missing):
 Verify columns:
 
 ```bash
-docker exec -i estore_mysql mysql -u estore_user -pestore_password -N -e "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='estore1' AND TABLE_NAME='products' AND COLUMN_NAME IN ('memory_options','color_options','specifications') ORDER BY COLUMN_NAME;"
+docker exec -i estore_mysql mysql -u estore_user -pestore_password -N -e "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='estore1' AND TABLE_NAME='products' AND COLUMN_NAME IN ('variant_options','memory_options','color_options','specifications') ORDER BY COLUMN_NAME;"
 ```
 
 ## Docker Services Details
